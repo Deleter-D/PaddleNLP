@@ -1239,8 +1239,6 @@ class Trainer:
 
         metrics = speed_metrics("train", start_time, num_samples=num_train_samples, num_steps=self.state.max_steps)
 
-        metrics["train_loss"] = train_loss
-
         self.is_in_train = False
 
         self._memory_tracker.stop_and_update_metrics(metrics)
