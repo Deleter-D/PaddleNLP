@@ -12,12 +12,12 @@ export PYTHONPATH=$(dirname $(pwd)):$PYTHONPATH
 # export FLAGS_enable_blaslt_global_search=True
 # export FLAGS_cublaslt_device_best_config=/work/PaddleNLP/csrc/generation/search.csv
 
-model_path=/work/weights/paddle/Meta-Llama-3-8B-Instruct-pdi
+model_path=/work/weights/Meta-Llama-3-8B-Instruct-pdi
 log_dir=/work/logs/Meta-Llama-3-8B/fp16
 mkdir -p $log_dir
 
 ### fixed params
-bsz=16
+bsz=32
 real_max_length=250
 real_min_length=$real_max_length
 
