@@ -1653,4 +1653,5 @@ def benchmark(predictor, predictor_args, model_args):
 
 
 if __name__ == "__main__":
-    predict()
+    # predict()
+    predict_with_dummy_data()
