@@ -57,6 +57,9 @@ class PredictorArgument:
     src_length: int = field(default=1024, metadata={"help": "The max length of source text."})
     min_length: int = field(default=1, metadata={"help": "the min length for decoding."})
     max_length: int = field(default=1024, metadata={"help": "the max length for decoding."})
+    real_src_length: int = field(default=1024, metadata={"help": "The real length of source text."})
+    real_min_length: int = field(default=1, metadata={"help": "The real min length for decoding."})
+    real_max_length: int = field(default=1024, metadata={"help": "The real max length for decoding."})
     top_k: int = field(default=0, metadata={"help": "top_k parameter for generation"})
     top_p: float = field(default=0.7, metadata={"help": "top_p parameter for generation"})
     temperature: float = field(default=0.95, metadata={"help": "top_p parameter for generation"})
@@ -816,10 +819,10 @@ class BlockInferencePredictorMixin(BasePredictor):
             shape=[config.batch_size, 1], fill_value=0.0, dtype="float32"
         )
         self.model_inputs["min_length"] = paddle.full(
-            shape=[config.batch_size, 1], fill_value=config.min_length, dtype="int64"
+            shape=[config.batch_size, 1], fill_value=config.real_min_length, dtype="int64"
         )
         self.model_inputs["max_length"] = paddle.full(
-            shape=[config.batch_size, 1], fill_value=config.max_length, dtype="int64"
+            shape=[config.batch_size, 1], fill_value=config.real_max_length, dtype="int64"
         )
         self.model_inputs["rope_emb"] = llm_utils.get_rotary_position_embedding(
             paddle.arange(config.total_max_length).reshape((1, -1)), self.head_dim, self.rope_theta, self.rope_scaling
@@ -1557,6 +1560,59 @@ def predict():
 
     if predictor_args.benchmark:
         benchmark(predictor, predictor_args, model_args)
+
+def predict_with_dummy_data():
+    parser = PdArgumentParser((PredictorArgument, ModelArgument))
+    predictor_args, model_args = parser.parse_args_into_dataclasses()
+
+    paddle.set_device(predictor_args.device)
+    paddle.set_default_dtype(predictor_args.dtype)
+
+    predictor = create_predictor(predictor_args, model_args)
+
+    with open("/work/PaddleNLP/llm/data/input_len.txt", "r") as f:
+        input_len_list =[]
+        for line in f:
+            input_len = int(line)
+            if input_len < predictor_args.max_length:
+                input_len_list.append(input_len)
+    
+    print(f"original input_len_list: {len(input_len_list)}")
+    align_len = int((len(input_len_list) + predictor_args.batch_size - 1) / predictor_args.batch_size) * predictor_args.batch_size
+    for i in range(align_len - len(input_len_list)):
+        input_len_list.append(input_len_list[0])
+
+    print(f"align_len: {align_len}")
+    print(f"input_len_list: {len(input_len_list)}")
+
+    source_texts = []
+    for i, length in enumerate(input_len_list):
+        # if not i < predictor_args.batch_size:
+        #     break
+        source_texts.append("a" * length)
+
+    batch_source_texts = batchfy_text(source_texts, predictor_args.batch_size)
+
+    total_time = 0
+    output_tokens = 0
+    for bs, batch_source_text in enumerate(batch_source_texts):
+        logger.info("Start predict")
+        start = time.perf_counter()
+        outputs, batch_tokens = predictor.predict(batch_source_text, return_tokens=True)
+        end = time.perf_counter()
+        output_tokens += sum([len(tokens) for tokens in batch_tokens])
+        total_time += end - start
+        logger.info("End predict")
+
+    print("Avg Elapse time is: ", total_time)
+    print("Output tokens is: ", output_tokens)
+    print(
+        "bs is: {}, IPS: {:.3f} tokens/s, QPS: {:.3f} requests/s. ".format(
+            predictor_args.batch_size,
+            (output_tokens / total_time),
+            ((len(input_len_list) / predictor_args.batch_size) / total_time),
+        )
+    )
 
 
 def benchmark(predictor, predictor_args, model_args):
