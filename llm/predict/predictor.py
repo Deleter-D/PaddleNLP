@@ -1617,14 +1617,13 @@ def predict_with_dummy_data():
 
 def benchmark(predictor, predictor_args, model_args):
     # Just construct a simple benchmark input. We pad input to the src_length.
-    test_texts = "hello world, how are you?"
-    benchmark_texts = [test_texts + "<pad>" * predictor_args.src_length for _ in range(predictor_args.batch_size)]
+    benchmark_texts = ["a" * predictor_args.real_src_length for _ in range(predictor_args.batch_size)]
 
     batch_benchmark_texts = batchfy_text(benchmark_texts, predictor_args.batch_size)
     print("***********Start Benchmark**********")
 
-    warmup_time = 10
-    test_time = 100
+    warmup_time = 3
+    test_time = 1
 
     print("***********Start Warmup**********")
     for _ in range(warmup_time):
@@ -1634,17 +1633,30 @@ def benchmark(predictor, predictor_args, model_args):
     print("***********Start Speed Test**********")
     start = time.perf_counter()
     output_tokens = 0
+
+    import paddle.profiler as profiler
+    prof = profiler.Profiler(
+        targets=[profiler.ProfilerTarget.CPU, profiler.ProfilerTarget.GPU],
+        record_shapes=True,
+        profile_memory=True,
+        with_flops=True,
+    )
     for _ in range(test_time):
+        prof.start()
         for bs, batch_source_text in enumerate(batch_benchmark_texts):
             outputs, batch_tokens = predictor.predict(batch_source_text, return_tokens=True)
+            prof.step()
             output_tokens += sum([len(tokens) for tokens in batch_tokens])
+        prof.stop()
+        prof.summary(sorted_by=profiler.SortedKeys.GPUTotal, op_detail=True)
+        prof.export("/work/logs/Llama-2-7b-profiling/profiler_data.json", format="json")
     end = time.perf_counter()
     print("Avg Elapse time is: ", (end - start) / test_time)
     print("Output tokens is: ", output_tokens)
     print(
         "Input length is: {}, Output length is: {}, bs is: {}, IPS: {:.3f} tokens/s, QPS: {:.3f} requests/s. ".format(
-            predictor_args.src_length,
-            predictor_args.max_length,
+            predictor_args.real_src_length,
+            predictor_args.real_max_length,
             predictor_args.batch_size,
             (output_tokens / (end - start)),
             (predictor_args.batch_size * test_time / (end - start)),
@@ -1653,5 +1665,5 @@ def benchmark(predictor, predictor_args, model_args):
 
 
 if __name__ == "__main__":
-    # predict()
-    predict_with_dummy_data()
+    predict()
+    # predict_with_dummy_data()
