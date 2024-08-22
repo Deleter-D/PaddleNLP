@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from __future__ import annotations
+from fileinput import close
 
 import json
 import os
@@ -1069,7 +1070,7 @@ class StaticBlockInferencePredictor(BlockInferencePredictorMixin):
 
         self.predictor = paddle.inference.create_predictor(config)
 
-    def predict(self, input_texts: list[str], return_tokens=False):
+    def predict(self, input_texts: list[str], return_tokens=False, profiling=False):
         s_time = time.time()
         self._preprocess(input_texts)
         logger.info(f"preprocess spend {time.time()  -  s_time}")
@@ -1089,8 +1090,27 @@ class StaticBlockInferencePredictor(BlockInferencePredictorMixin):
             read_res_process.start()
 
         s_time = time.time()
+
+        import paddle.profiler as profiler
+        prefill_scheduler = profiler.make_scheduler(closed=0, ready=0, record=1, repeat=1)
+        decode_scheduler = profiler.make_scheduler(closed=1, ready=1, record=5, repeat=1)
+        prof = profiler.Profiler(
+            targets=[profiler.ProfilerTarget.CPU, profiler.ProfilerTarget.GPU],
+            scheduler=decode_scheduler,
+            record_shapes=True,
+            profile_memory=True,
+            with_flops=True,
+        )
+        if profiling:
+            prof.start()
         while self.model_inputs["not_need_stop"]:
             self.predictor.run(list(self.model_inputs.values()))
+            if profiling:
+                prof.step()
+        if profiling:
+            prof.stop()
+            prof.summary(sorted_by=profiler.SortedKeys.GPUTotal, op_detail=True)
+            prof.export("/work/logs/Llama-2-7b-profiling/profiler_data.json", format="json")
         logger.info(f"running spend {time.time()  -  s_time}")
 
         if self.tensor_parallel_rank == 0:
@@ -1633,23 +1653,10 @@ def benchmark(predictor, predictor_args, model_args):
     print("***********Start Speed Test**********")
     start = time.perf_counter()
     output_tokens = 0
-
-    import paddle.profiler as profiler
-    prof = profiler.Profiler(
-        targets=[profiler.ProfilerTarget.CPU, profiler.ProfilerTarget.GPU],
-        record_shapes=True,
-        profile_memory=True,
-        with_flops=True,
-    )
     for _ in range(test_time):
-        prof.start()
         for bs, batch_source_text in enumerate(batch_benchmark_texts):
-            outputs, batch_tokens = predictor.predict(batch_source_text, return_tokens=True)
-            prof.step()
+            outputs, batch_tokens = predictor.predict(batch_source_text, return_tokens=True, profiling=True)
             output_tokens += sum([len(tokens) for tokens in batch_tokens])
-        prof.stop()
-        prof.summary(sorted_by=profiler.SortedKeys.GPUTotal, op_detail=True)
-        prof.export("/work/logs/Llama-2-7b-profiling/profiler_data.json", format="json")
     end = time.perf_counter()
     print("Avg Elapse time is: ", (end - start) / test_time)
     print("Output tokens is: ", output_tokens)
