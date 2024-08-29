@@ -1094,6 +1094,7 @@ class StaticBlockInferencePredictor(BlockInferencePredictorMixin):
         import paddle.profiler as profiler
         prefill_scheduler = profiler.make_scheduler(closed=0, ready=0, record=1, repeat=1)
         decode_scheduler = profiler.make_scheduler(closed=1, ready=1, record=5, repeat=1)
+        full_scheduler = profiler.make_scheduler(closed=0, ready=0, record=6, repeat=1)
         prof = profiler.Profiler(
             targets=[profiler.ProfilerTarget.CPU, profiler.ProfilerTarget.GPU],
             scheduler=decode_scheduler,
@@ -1110,7 +1111,7 @@ class StaticBlockInferencePredictor(BlockInferencePredictorMixin):
         if profiling:
             prof.stop()
             prof.summary(sorted_by=profiler.SortedKeys.GPUTotal, op_detail=True)
-            prof.export("/work/logs/Llama-2-7b-profiling/profiler_data.json", format="json")
+            prof.export("/work/logs/Llama-2-7b-profiling/tuned/profiler_data.json", format="json")
         logger.info(f"running spend {time.time()  -  s_time}")
 
         if self.tensor_parallel_rank == 0:
@@ -1560,6 +1561,10 @@ def predict():
     batch_source_texts = batchfy_text(source_texts, predictor_args.batch_size)
     batch_target_texts = batchfy_text(target_texts, predictor_args.batch_size)
 
+    if predictor_args.benchmark:
+        benchmark(predictor, predictor_args, model_args)
+        return
+
     with open(model_args.output_file, "w", encoding="utf-8") as f:
         for bs, batch_source_text in enumerate(batch_source_texts):
             logger.info("Start predict")
@@ -1590,7 +1595,7 @@ def predict_with_dummy_data():
 
     predictor = create_predictor(predictor_args, model_args)
 
-    with open("/work/PaddleNLP/llm/data/input_len.txt", "r") as f:
+    with open("/work/PaddleNLP-wyp/llm/data/input_len.txt", "r") as f:
         input_len_list =[]
         for line in f:
             input_len = int(line)
